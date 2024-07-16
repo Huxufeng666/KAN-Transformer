@@ -527,7 +527,7 @@ def vit_base_patch16_224(num_classes: int = 1000):
     """
     model = VisionTransformer(img_size=224,
                               patch_size=16,
-                              embed_dim=768,
+                              embed_dim=128,
                               depth=12,
                               num_heads=12,
                               representation_size=None,

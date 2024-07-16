@@ -53,7 +53,7 @@ validation_loader = torch.utils.data.DataLoader(dataset = cifar_testset, batch_s
 # model = KAN_Net().cuda()
 # model = Sin_Net().cuda()
 # model  = vit_large_patch16_224().to(device)#.cuda()
-model  = deepvit_L(num_classes= 10).to(device)
+model  = deepvit_S(num_classes= 10).to(device)
 
 # model = Efficient_KAN_Net().cuda()
 # model = Efficient_SKAN_Net().cuda()
