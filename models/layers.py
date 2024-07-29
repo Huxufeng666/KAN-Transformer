@@ -6,7 +6,8 @@ import torch.nn.init as init
 import torch.nn.functional as F
 from timm.models.layers import DropPath, to_2tuple
 
-from .attention_mechanisms import KAN_attention, KA_attention, KA_attention_reduced, KA_attention_crossinf, KA_attention_crossinf_scaling, KA_attention_heads_mod
+from models.attention_mechanisms import KAN_attention, KA_attention, KA_attention_reduced, KA_attention_crossinf, KA_attention_crossinf_multi_head, KA_attention_heads_mod,Grouped_KA_attention
+# from attention_mechanisms import KA_attention_crossinf_multi_head
 
 class Mlp(nn.Module):
     def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0., expansion_ratio=3):
@@ -41,8 +42,11 @@ class Attention(nn.Module):
         self.proj = nn.Linear(dim, dim)
         self.proj_drop = nn.Dropout(proj_drop)
         
-        # self.kan_attention = KA_attention(out_dim = num_patches, patches = num_patches, heads = self.num_heads, head_dim = head_dim)
-        self.kan_attention = KA_attention_heads_mod(out_dim = num_patches, patches = num_patches, heads = self.num_heads, head_dim = head_dim)
+        self.kan_attention = KA_attention_crossinf_multi_head(out_dim = num_patches, patches = num_patches, heads = self.num_heads, head_dim = head_dim)
+        # print( 'num_patches',num_patches.shape)
+        # print('num_patches: ', (self.num_heads).shape)
+        # print('head_dim: ', head_dim.shape)
+        # self.kan_attention = KA_attention_heads_mod(out_dim = num_patches, patches = num_patches, heads = self.num_heads, head_dim = head_dim)
 
     def forward(self, x, atten=None):
         
@@ -51,6 +55,7 @@ class Attention(nn.Module):
         qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
         q, k, v = qkv[0], qkv[1], qkv[2]   # make torchscript happy (cannot use tensor as tuple)
 
+        
         # attn = (q @ k.transpose(-2, -1)) * self.scale
         # attn = attn.softmax(dim=-1)
         # print('actual attention shape: ', attn.shape)
@@ -58,15 +63,16 @@ class Attention(nn.Module):
         # x = (attn @ v).transpose(1, 2).reshape(B, N, C)
         # print('after attention shape: ', x.shape)
         
-        q, k = self.kan_attention(q, k, self.scale)
-        attn = (q @ k.transpose(-2, -1)) * self.scale
+        attn = self.kan_attention(q, k, self.scale)
+        # attn = (q @ k.transpose(-2, -1)) * self.scale
         # attn = self.attn_drop(attn)
         # x = (attn*v).transpose(1, 2).reshape(B, N, C)
         x = (attn @ v).transpose(1, 2).reshape(B, N, C)
 
         x = self.proj(x)
         x = self.proj_drop(x)
-        return x, attn
+        return x , attn
+        # return x 
     
 class ReAttention(nn.Module):
     """

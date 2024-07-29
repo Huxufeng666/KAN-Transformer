@@ -4,6 +4,26 @@ import torch.nn.functional as F
 
 # from spline import *
 
+class Combined_patch_attention(nn.Module):
+    def __init__(self, out_dim, patches, heads, head_dim, reduce_ratio = 8, num_f = 8, base_fun = nn.SiLU(), device = 'cuda'):
+        super(Combined_patch_attention, self).__init__()
+    
+        self.num_f = num_f
+        self.num = patches*heads*head_dim
+        self.base_fun = base_fun
+        self.device = device
+        self.out_dim = out_dim
+        self.head_dim = head_dim
+        
+        
+    def forward(self, q, k, scale):
+        batch = q.shape[0]
+        heads = q.shape[1]
+        patches = q.shape[2]
+        dim = q.shape[3]
+        
+
+
 class KA_attention_heads_mod(nn.Module):
     def __init__(self, out_dim, patches, heads, head_dim, reduce_ratio = 8, num_f = 8, base_fun = nn.SiLU(), device = 'cuda'):
         super(KA_attention_heads_mod, self).__init__()
@@ -21,23 +41,26 @@ class KA_attention_heads_mod(nn.Module):
         # self.grid = nn.Parameter((torch.arange(int(num_f)).float() + 1), requires_grad = True)
         # self.grid_outer = nn.Parameter((torch.arange(int(num_f)).float() + 1), requires_grad = True)
         
-        grid = torch.arange(num_f).unsqueeze(0).float() + 1
-        grid = grid.repeat(5, 1)
+        grid = torch.arange(num_f*5).unsqueeze(0).float() + 1
+        grid = grid.reshape(5, self.num_f)#repeat(5, 1)
         self.grid = nn.Parameter(grid, requires_grad = True)
         
         self.base_weight_qk = nn.Parameter(torch.rand((head_dim, head_dim), requires_grad = True))
         
         
-        self.coef_q = nn.Parameter(torch.rand((head_dim*heads*patches, int(self.num_f), 5), requires_grad = True))
-        self.coef_k = nn.Parameter(torch.rand((head_dim*heads*patches, int(self.num_f), 5), requires_grad = True))
+        self.coef_q = nn.Parameter(torch.rand((head_dim, int(self.num_f), 5), requires_grad = True))
+        self.coef_k = nn.Parameter(torch.rand((head_dim, int(self.num_f), 5), requires_grad = True))
+        
+        self.coef_q_outer = nn.Parameter(torch.ones((1, 1, 5, patches, self.head_dim), requires_grad = True))
+        self.coef_k_outer = nn.Parameter(torch.ones((1, 1, 5, patches, self.head_dim), requires_grad = True))
         
         # self.coef_outer = nn.Parameter(torch.rand((patches*head_dim, int(self.num_f)), requires_grad = True))
 
         self.shift_q = nn.Parameter(torch.rand(1, heads, 5, patches, self.head_dim))
         self.shift_k = nn.Parameter(torch.rand(1, heads, 5, patches, self.head_dim))
 
-        self.scale_base = nn.Parameter(torch.ones(1, 1, 1, 1, head_dim)).requires_grad_(True)
-        self.scale_sp = nn.Parameter(torch.ones(1, 1, 1, 1, head_dim)).requires_grad_(True)
+        self.scale_base = nn.Parameter(torch.ones(1, heads, 5, patches, head_dim)).requires_grad_(True)
+        self.scale_sp = nn.Parameter(torch.ones(1, heads, 5, patches, head_dim)).requires_grad_(True)
         # self.scale_sp = nn.Parameter(torch.ones(1, heads, patches, self.out_dim)).requires_grad_(True)
         
         self.lin_q = nn.Linear(head_dim, head_dim*5)
@@ -49,10 +72,12 @@ class KA_attention_heads_mod(nn.Module):
 
     def inner_function(self, q, k, batch, heads, patches):
         
-        q = self.lin_q(q).reshape(batch, 5, self.head_dim*heads*patches)
-        k = self.lin_k(k).reshape(batch, 5, self.head_dim*heads*patches)
+        q = self.lin_q(q).reshape(batch*heads*patches, 5, self.head_dim)
+        k = self.lin_k(k).reshape(batch*heads*patches, 5, self.head_dim)
         
+        #print('grid before: ', self.grid.shape)
         grid = torch.unsqueeze(self.grid, dim = 2)
+        #print('grid after: ', grid.shape)
         
         q = torch.unsqueeze(q, dim = 2)
         k = torch.unsqueeze(k, dim = 2)
@@ -88,13 +113,10 @@ class KA_attention_heads_mod(nn.Module):
         dim = q.shape[3]
         
         qk = torch.cat((q, k), dim = 0)
-        # qk = qk.reshape(int(2*batch)*heads*patches, 1, dim)
         
         base_qk = F.linear(self.base_fun(qk), self.base_weight_qk)
         base_qk = torch.unsqueeze(base_qk, dim = 2)
         
-        #qq = q.reshape(batch*heads*patches, dim)
-        #kk = k.reshape(batch*heads*patches, dim)
         
         f_out_q, f_out_k = self.inner_function(q, k, batch, heads, patches) #[batch*heads, 5, patches, dim]
         
@@ -104,8 +126,8 @@ class KA_attention_heads_mod(nn.Module):
         f_out_k = f_out_k*self.scale_sp + base_qk[batch:int(2*batch), :, :, :, :]*self.scale_base
         # f_out_q = self.outward_function(f_out_q, batch, heads, patches)
         # f_out_k = self.outward_function(f_out_k, batch, heads, patches)
-        f_out_q = self.lin_out_q(f_out_q)
-        f_out_k = self.lin_out_k(f_out_k)
+        f_out_q = self.lin_out_q(f_out_q)*self.coef_q_outer
+        f_out_k = self.lin_out_k(f_out_k)*self.coef_k_outer
         
         f_out_q = torch.sum(f_out_q, dim = 2)
         f_out_k = torch.sum(f_out_k, dim = 2)
@@ -127,7 +149,107 @@ class KA_attention_heads_mod(nn.Module):
         return f_out_q, f_out_k
 
 
+class KA_attention_crossinf_multi_head(nn.Module):
+    def __init__(self, out_dim, patches, heads, head_dim, reduce_ratio = 8, num_f = 8, base_fun = nn.SiLU(), device = 'cuda'):
+        super(KA_attention_crossinf_multi_head, self).__init__()
+        
+        self.num_f = num_f
+        self.num = patches*heads*head_dim
+        self.base_fun = base_fun
+        self.device = device
+        self.out_dim = out_dim
+        self.reduced_dim = int(head_dim/reduce_ratio)
+        self.head_dim = head_dim
+        
+        grid = torch.arange(num_f*5).unsqueeze(0).float() + 1
+        grid = grid.reshape(5, self.num_f)#repeat(5, 1)
+        self.grid = nn.Parameter(grid, requires_grad = True)
+        
+        self.base_weight_qk = nn.Parameter(torch.rand((head_dim, head_dim), requires_grad = True))
+        self.outer_base_weight_qk = nn.Parameter(torch.rand((head_dim, head_dim), requires_grad = True))
+        
+        self.coef_q = nn.Parameter(torch.rand((head_dim, int(self.num_f), 5), requires_grad = True))
+        self.coef_k = nn.Parameter(torch.rand((head_dim, int(self.num_f), 5), requires_grad = True))
+
+        self.scale_base = nn.Parameter(torch.ones(1, heads, 5, patches, head_dim)).requires_grad_(True)
+        self.scale_sp = nn.Parameter(torch.ones(1, heads, 5, patches, head_dim)).requires_grad_(True)
+        
+        self.scale_base_outer = nn.Parameter(torch.ones(1, heads, 5, patches, head_dim)).requires_grad_(True)
+        self.scale_sp_outer = nn.Parameter(torch.ones(1, heads, 5, patches, head_dim)).requires_grad_(True)
+        
+        self.coef_q_outer = nn.Parameter(torch.ones((1, 1, 5, patches, self.head_dim), requires_grad = True))
+        self.coef_k_outer = nn.Parameter(torch.ones((1, 1, 5, patches, self.head_dim), requires_grad = True))
+        
+        self.lin_qk = nn.Linear(head_dim, head_dim)
+        
+        self.lin_q = nn.Linear(head_dim, head_dim*5)
+        self.lin_k = nn.Linear(head_dim, head_dim*5)
+        
+        self.lin_out_q = nn.Linear(head_dim, head_dim)
+        self.lin_out_k = nn.Linear(head_dim, head_dim)
+
+
+    def inner_function(self, q, k, batch, heads, patches):
+        
+        q = self.lin_q(q).reshape(batch*heads*patches, 5, self.head_dim)
+        k = self.lin_k(k).reshape(batch*heads*patches, 5, self.head_dim)
+        
+        #print('grid before: ', self.grid.shape)
+        grid = torch.unsqueeze(self.grid, dim = 2)
+        #print('grid after: ', grid.shape)
+        
+        q = torch.unsqueeze(q, dim = 2)
+        k = torch.unsqueeze(k, dim = 2)
+        
+        f_out_q = torch.sin(grid*q).permute(3, 2, 1, 0)
+        f_out_q = torch.einsum('ijk,ijkl->ijkl', self.coef_q, f_out_q).permute(3, 2, 1, 0)
+        f_out_q = f_out_q.reshape(batch, heads, 5, self.num_f, patches, self.head_dim)
+        f_out_q = torch.sum(f_out_q, dim = 3)
+        
+        f_out_k = torch.sin(grid*k).permute(3, 2, 1, 0)
+        f_out_k = torch.einsum('ijk,ijkl->ijkl', self.coef_k, f_out_k).permute(3, 2, 1, 0)
+        f_out_k = f_out_k.reshape(batch, heads, 5, self.num_f, patches, self.head_dim)
+        f_out_k = torch.sum(f_out_k, dim = 3)
+        
+        return f_out_q, f_out_k
+        
+    def forward(self, q, k, scale):
+        batch = q.shape[0]
+        heads = q.shape[1]
+        patches = q.shape[2]
+        dim = q.shape[3]
+        
+        qk = torch.cat((q, k), dim = 0)
+        
+        base_qk = F.linear(self.base_fun(qk), self.base_weight_qk)
+        base_qk = torch.unsqueeze(base_qk, dim = 2)
+        
+        f_out_q, f_out_k = self.inner_function(q, k, batch, heads, patches) #[batch*heads, 5, patches, dim]
+        
+        f_out_q = f_out_q*self.scale_sp + base_qk[0:batch, :, :, :, :]*self.scale_base
+        f_out_k = f_out_k*self.scale_sp + base_qk[batch:int(2*batch), :, :, :, :]*self.scale_base
+        
+        f_out_q = self.lin_out_q(f_out_q)*self.coef_q_outer
+        f_out_k = self.lin_out_k(f_out_k)*self.coef_k_outer
+        
+        f_out_q = torch.sum(f_out_q, dim = 2)
+        f_out_k = torch.sum(f_out_k, dim = 2)
+        
+        f_out_q = torch.sigmoid(torch.unsqueeze(f_out_q, dim = 3))
+        f_out_k = torch.sigmoid(torch.unsqueeze(f_out_k, dim = 2))
+        
+        f_out = (f_out_q + f_out_k)
+        f_out = torch.sum(f_out, dim = 4)
+        # f_out = self.lin_qk(f_out)
+        
+        attn = f_out.softmax(dim=-1)
+        
+        
+        return attn
+
+
 from scipy.linalg import expm, sinm, cosm
+
 class KA_attention_crossinf_scaling(nn.Module):
     def __init__(self, out_dim, patches, heads, head_dim, reduce_ratio = 8, num_f = 8, base_fun = nn.SiLU(), device = 'cuda'):
         super(KA_attention_crossinf_scaling, self).__init__()
@@ -209,8 +331,118 @@ class KA_attention_crossinf_scaling(nn.Module):
         
         return q, k
 
+class KA_attention_crossinf_2layer(nn.Module):
+    def __init__(self, out_dim, patches, heads, head_dim, reduce_ratio = 8, num_f = 8, base_fun = nn.SiLU(), device = 'cuda'):
+        super(KA_attention_crossinf_2layer, self).__init__()
+        
+        self.num_f = num_f
+        self.num = patches*heads*head_dim
+        self.base_fun = base_fun
+        self.device = device
+        self.out_dim = out_dim
+        self.reduced_dim = int(head_dim/reduce_ratio)
+        self.head_dim = head_dim
+        
+        
+        #self.grid = nn.Parameter((torch.arange(num_f).float() + 1), requires_grad = True)
+        grid = torch.arange(num_f*5).unsqueeze(0).float() + 1
+        grid = grid.reshape(5, self.num_f)#repeat(5, 1)
+        self.grid = nn.Parameter(grid, requires_grad = True)
+        self.grid_outer = nn.Parameter(grid, requires_grad = True)
+        
+        self.base_weight = nn.Parameter(torch.rand((head_dim, head_dim), requires_grad = True))
+        
+        self.coef_q = nn.Parameter(torch.rand((head_dim, self.num_f, 5), requires_grad = True))
+        self.coef_k = nn.Parameter(torch.rand((head_dim, self.num_f, 5), requires_grad = True))
+        
+        self.coef_qk = nn.Parameter(torch.rand((patches*patches, self.num_f, 5), requires_grad = True))
+
+        
+        self.scale_base = nn.Parameter(torch.ones(1, heads, 5, patches, head_dim)).requires_grad_(True)
+        self.scale_sp = nn.Parameter(torch.ones(1, heads, 5, patches, head_dim)).requires_grad_(True)
+        
+        self.coef_qk_outer = nn.Parameter(torch.ones((1, 1, 5, patches, patches), requires_grad = True))
+        
+        self.lin_q = nn.Linear(head_dim, head_dim*5)
+        self.lin_k = nn.Linear(head_dim, head_dim*5)
+        
+        #self.lin_qk = nn.Linear(head_dim, head_dim)
+
+
+    def inner_function(self, q, k, batch, heads, patches):
+        q = self.lin_q(q).reshape(batch*heads*patches, 5, self.head_dim)
+        k = self.lin_k(k).reshape(batch*heads*patches, 5, self.head_dim)
+        
+        base_q = F.linear(self.base_fun(q), self.base_weight)
+        base_k = F.linear(self.base_fun(k), self.base_weight)
+        
+        grid = torch.unsqueeze(self.grid, dim = 2)
+        
+        q = torch.unsqueeze(q, dim = 2)
+        k = torch.unsqueeze(k, dim = 2)
+        
+        f_out_q = torch.sin(grid*q).permute(3, 2, 1, 0)
+        #print('shapes: ', f_out_q.shape, self.coef_q.shape)
+        f_out_q = torch.einsum('ijk,ijkl->ijkl', self.coef_q, f_out_q).permute(3, 2, 1, 0)
+        f_out_q = f_out_q.reshape(batch, heads, 5, self.num_f, patches, self.head_dim)
+        f_out_q = torch.sum(f_out_q, dim = 3)
+        
+        f_out_k = torch.sin(grid*k).permute(3, 2, 1, 0)
+        f_out_k = torch.einsum('ijk,ijkl->ijkl', self.coef_k, f_out_k).permute(3, 2, 1, 0)
+        f_out_k = f_out_k.reshape(batch, heads, 5, self.num_f, patches, self.head_dim)
+        f_out_k = torch.sum(f_out_k, dim = 3)
+        
+        return f_out_q, f_out_k, base_q, base_k
+        
+    def outer_function(self, qk, batch, heads, patches):
+        qk = qk.reshape(batch*heads, 5, patches*patches)
+        grid = torch.unsqueeze(self.grid_outer, dim = 2)
+        qk = torch.unsqueeze(qk, dim = 2)
+        
+        f_out_qk = torch.sin(grid*qk).permute(3, 2, 1, 0)
+        #print('shapes outer: ', f_out_qk.shape, self.coef_qk.shape)
+        f_out_qk = torch.einsum('ijk,ijkl->ijkl', self.coef_qk, f_out_qk).permute(3, 2, 1, 0)
+        f_out_qk = f_out_qk.reshape(batch, heads, 5, self.num_f, patches, patches)
+        f_out_qk = torch.sum(f_out_qk, dim = 3)
+        
+        return f_out_qk
+        
+    def forward(self, q, k, scale):
+        batch = q.shape[0]
+        heads = q.shape[1]
+        patches = q.shape[2]
+        dim = q.shape[3]
+        
+        #base_q = F.linear(self.base_fun(q), self.base_weight)
+        #base_k = F.linear(self.base_fun(k), self.base_weight)
+        
+        q = q.reshape(batch*heads*patches, dim)
+        k = k.reshape(batch*heads*patches, dim)
+        
+        f_out_q, f_out_k, base_q, base_k = self.inner_function(q, k, batch, heads, patches)
+        
+        #print('-- mult shapes: ', self.scale_sp.shape, base_q.shape, self.scale_base.shape)
+        f_out_q = f_out_q.reshape(batch, heads, 5, patches, dim)*self.scale_sp + base_q.reshape(batch, heads, 5, patches, self.head_dim)*self.scale_base
+        f_out_k = f_out_k.reshape(batch, heads, 5, patches, dim)*self.scale_sp + base_k.reshape(batch, heads, 5, patches, self.head_dim)*self.scale_base
+        
+        f_out_q = torch.sigmoid(torch.unsqueeze(f_out_q, dim = 4))
+        f_out_k = torch.sigmoid(torch.unsqueeze(f_out_k, dim = 3))
+        
+        f_out = (f_out_q + f_out_k)
+        f_out = torch.sum(f_out, dim = 5) # [batch, heads, 5, patches, patches]
+        #f_out = self.lin_qk(f_out)
+        
+        f_out = self.outer_function(f_out, batch, heads, patches) * self.coef_qk_outer
+        f_out = torch.sum(f_out, dim = 2)
+        
+        attn = f_out.softmax(dim=-1)
+        
+        
+        return attn
+
+
 class KA_attention_crossinf(nn.Module):
-    def __init__(self, out_dim, patches, heads, head_dim, reduce_ratio = 8, num_f = 12, base_fun = nn.SiLU(), device = 'cuda'):
+    def __init__(self, out_dim, patches, heads, head_dim, reduce_ratio = 8, num_f = 8, base_fun = nn.SiLU(), device = 'cuda'):
         super(KA_attention_crossinf, self).__init__()
         
         self.num_f = num_f
@@ -277,7 +509,7 @@ class KA_attention_crossinf(nn.Module):
 
         f_out = (f_out_q + f_out_k)
         f_out = torch.sum(f_out, dim = 4)
-        f_out = self.lin_qk(f_out)
+        #f_out = self.lin_qk(f_out)
         
         attn = f_out.softmax(dim=-1)
         
@@ -375,73 +607,192 @@ class KA_attention_reduced(nn.Module):
         return attn
 
 
-# class KA_attention_reduced(nn.Module):
-#     def __init__(self, out_dim, patches, heads, head_dim, num_f = 8, base_fun = nn.SiLU(), device = 'cuda'):
-#         super(KA_attention_reduced, self).__init__()
+class KA_attention_2layer(nn.Module):
+    def __init__(self, out_dim, patches, heads, head_dim, reduce_ratio = 8, num_f = 8, base_fun = nn.SiLU(), device = 'cuda'):
+        super(KA_attention_2layer, self).__init__()
         
-#         self.num_f = num_f
-#         self.num = patches*heads*head_dim
-#         self.base_fun = base_fun
-#         self.device = device
-#         self.out_dim = out_dim
-        
-#         self.grid = nn.Parameter((torch.arange(num_f).float() + 1), requires_grad = True)
-        
-#         # self.base_weight_qk = nn.Parameter(torch.rand((patches*heads*self.out_dim, self.num), requires_grad = True))
-#         self.base_weight_qk = nn.Parameter(torch.rand((self.out_dim, head_dim), requires_grad = True))
-        
-#         self.coef_qk = nn.Parameter(torch.rand((self.num, self.num_f), requires_grad = True))
-
-#         self.scale_base = nn.Parameter(torch.ones(patches*heads*self.out_dim)).requires_grad_(True)
-#         # self.scale_sp = nn.Parameter(torch.ones(patches*heads*self.out_dim)).requires_grad_(True)
-#         self.scale_sp = nn.Parameter(torch.ones(1, heads, patches, self.out_dim)).requires_grad_(True)
+        self.num_f = num_f
+        self.num = patches*heads*head_dim
+        self.base_fun = base_fun
+        self.device = device
+        self.out_dim = out_dim
+        self.reduced_dim = int(head_dim/reduce_ratio)
+        self.head_dim = head_dim
         
         
-#         # self.lin_qk = nn.Linear(self.num, patches*heads*self.out_dim)
-#         self.lin_qk = nn.Linear(head_dim, self.out_dim)
-
+        #self.grid = nn.Parameter((torch.arange(num_f).float() + 1), requires_grad = True)
+        grid = torch.arange(num_f*5).unsqueeze(0).float() + 1
+        grid = grid.reshape(5, self.num_f)#repeat(5, 1)
+        self.grid = nn.Parameter(grid, requires_grad = True)
         
+        self.base_weight = nn.Parameter(torch.rand((head_dim, head_dim), requires_grad = True))
         
-#     def forward(self, q, k, _):
-#         batch = q.shape[0]
-#         heads = q.shape[1]
-#         patches = q.shape[2]
-#         dim = q.shape[3]
+        self.coef_q = nn.Parameter(torch.rand((head_dim, self.num_f, 5), requires_grad = True))
+        self.coef_k = nn.Parameter(torch.rand((head_dim, self.num_f, 5), requires_grad = True))
+        
+        self.coef_qk = nn.Parameter(torch.rand((patches*patches, self.num_f, 5), requires_grad = True))
 
         
-#         qk = torch.cat((q, k), dim = 0)
+        self.scale_base = nn.Parameter(torch.ones(1, heads, 5, patches, head_dim)).requires_grad_(True)
+        self.scale_sp = nn.Parameter(torch.ones(1, heads, 5, patches, head_dim)).requires_grad_(True)
         
-#         base_qk = F.linear(self.base_fun(qk), self.base_weight_qk)
+        self.coef_qk_outer = nn.Parameter(torch.ones((1, 1, 5, patches, patches), requires_grad = True))
+        
+        self.lin_q = nn.Linear(head_dim, head_dim*5)
+        self.lin_k = nn.Linear(head_dim, head_dim*5)
+        
+        self.lin_qk = nn.Linear(head_dim, patches)
+
+
+    def inner_function(self, q, k, batch, heads, patches):
+        q = self.lin_q(q).reshape(batch*heads*patches, 5, self.head_dim)
+        k = self.lin_k(k).reshape(batch*heads*patches, 5, self.head_dim)
+        
+        base_q = F.linear(self.base_fun(q), self.base_weight)
+        base_k = F.linear(self.base_fun(k), self.base_weight)
+        
+        grid = torch.unsqueeze(self.grid, dim = 2)
+        
+        q = torch.unsqueeze(q, dim = 2)
+        k = torch.unsqueeze(k, dim = 2)
+        
+        f_out_q = torch.sin(grid*q).permute(3, 2, 1, 0)
+        #print('shapes: ', f_out_q.shape, self.coef_q.shape)
+        f_out_q = torch.einsum('ijk,ijkl->ijkl', self.coef_q, f_out_q).permute(3, 2, 1, 0)
+        f_out_q = f_out_q.reshape(batch, heads, 5, self.num_f, patches, self.head_dim)
+        f_out_q = torch.sum(f_out_q, dim = 3)
+        
+        f_out_k = torch.sin(grid*k).permute(3, 2, 1, 0)
+        f_out_k = torch.einsum('ijk,ijkl->ijkl', self.coef_k, f_out_k).permute(3, 2, 1, 0)
+        f_out_k = f_out_k.reshape(batch, heads, 5, self.num_f, patches, self.head_dim)
+        f_out_k = torch.sum(f_out_k, dim = 3)
+        
+        return f_out_q, f_out_k, base_q, base_k
+        
+    def outer_function(self, qk, batch, heads, patches):
+        qk = qk.reshape(batch*heads, 5, patches*patches)
+        grid = torch.unsqueeze(self.grid, dim = 2)
+        qk = torch.unsqueeze(qk, dim = 2)
+        
+        f_out_qk = torch.sin(grid*qk).permute(3, 2, 1, 0)
+        #print('shapes outer: ', f_out_qk.shape, self.coef_qk.shape)
+        f_out_qk = torch.einsum('ijk,ijkl->ijkl', self.coef_qk, f_out_qk).permute(3, 2, 1, 0)
+        f_out_qk = f_out_qk.reshape(batch, heads, 5, self.num_f, patches, patches)
+        f_out_qk = torch.sum(f_out_qk, dim = 3)
+        
+        return f_out_qk
+        
+    def forward(self, q, k, scale):
+        batch = q.shape[0]
+        heads = q.shape[1]
+        patches = q.shape[2]
+        dim = q.shape[3]
+        
+        #base_q = F.linear(self.base_fun(q), self.base_weight)
+        #base_k = F.linear(self.base_fun(k), self.base_weight)
+        
+        q = q.reshape(batch*heads*patches, dim)
+        k = k.reshape(batch*heads*patches, dim)
+        
+        f_out_q, f_out_k, base_q, base_k = self.inner_function(q, k, batch, heads, patches)
+        
+        #print('-- mult shapes: ', self.scale_sp.shape, base_q.shape, self.scale_base.shape)
+        f_out_q = f_out_q.reshape(batch, heads, 5, patches, dim)*self.scale_sp + base_q.reshape(batch, heads, 5, patches, self.head_dim)*self.scale_base
+        f_out_k = f_out_k.reshape(batch, heads, 5, patches, dim)*self.scale_sp + base_k.reshape(batch, heads, 5, patches, self.head_dim)*self.scale_base
+        
+        #f_out_q = torch.sigmoid(torch.unsqueeze(f_out_q, dim = 4))
+        #f_out_k = torch.sigmoid(torch.unsqueeze(f_out_k, dim = 3))
+        
+        f_out = (f_out_q + f_out_k)
+        #f_out = torch.sum(f_out, dim = 5) # [batch, heads, 5, patches, patches]
+        f_out = self.lin_qk(f_out)
+        
+        f_out = self.outer_function(f_out, batch, heads, patches) * self.coef_qk_outer
+        f_out = torch.sum(f_out, dim = 2)
+        
+        attn = f_out.softmax(dim=-1)
+        
+        
+        return attn
+
+
+class KA_attention_orig_crossinf(nn.Module):
+    def __init__(self, out_dim, patches, heads, head_dim, num_f = 8, base_fun = nn.SiLU(), device = 'cuda'):
+        super(KA_attention_orig_crossinf, self).__init__()
+        
+        self.num_f = num_f
+        self.num = patches*heads*head_dim
+        self.base_fun = base_fun
+        self.device = device
+        self.out_dim = out_dim
+        
+        self.grid = nn.Parameter((torch.arange(num_f).float() + 1), requires_grad = True)
+        
+        self.base_weight_q = nn.Parameter(torch.rand((patches*heads*head_dim, self.num), requires_grad = True))
+        self.base_weight_k = nn.Parameter(torch.rand((patches*heads*head_dim, self.num), requires_grad = True))
+        
+        self.coef_q = nn.Parameter(torch.rand((self.num, self.num_f), requires_grad = True))
+        self.coef_k = nn.Parameter(torch.rand((self.num, self.num_f), requires_grad = True))
+
+        
+        self.scale_base = nn.Parameter(torch.ones(patches*heads*head_dim)).requires_grad_(True)
+        self.scale_sp = nn.Parameter(torch.ones(patches*heads*head_dim)).requires_grad_(True)
+        
+        # self.conv_layer_q = nn.Conv1d(self.num*num_f, patches*heads*self.out_dim*num_f, kernel_size = 1, groups = num_f)
+        # self.conv_layer_k = nn.Conv1d(self.num*num_f, patches*heads*self.out_dim*num_f, kernel_size = 1, groups = num_f)
+        
+        #self.lin_q = nn.Linear(self.num, patches*heads*head_dim)
+        #self.lin_k = nn.Linear(self.num, patches*heads*head_dim)
+        
+        
+    def forward(self, q, k, _):
+        batch = q.shape[0]
+        heads = q.shape[1]
+        patches = q.shape[2]
+        dim = q.shape[3]
+        #print('input shape: ', q.shape, ' ', k.shape)
+        q = q.reshape(batch, heads*patches*dim)
+        k = k.reshape(batch, heads*patches*dim)
+        
+        base_q = F.linear(self.base_fun(q), self.base_weight_q)
+        base_k = F.linear(self.base_fun(k), self.base_weight_k)
+        
+        q = torch.unsqueeze(q, dim = 1)
+        k = torch.unsqueeze(k, dim = 1)
+        grid = torch.unsqueeze(self.grid, dim = 1)
+        
+        f_out_q = torch.sin(grid*q).permute(2, 1, 0)
+        f_out_k = torch.sin(grid*k).permute(2, 1, 0)
+        
+        
+        f_out_q = torch.einsum('ij,ijk->ijk', self.coef_q, f_out_q).permute(2, 1, 0)
+        f_out_k = torch.einsum('ij,ijk->ijk', self.coef_k, f_out_k).permute(2, 1, 0)
         
 
-#         qk = qk.reshape(int(2*batch), patches*heads*dim)
+        #f_out_q = self.lin_q(f_out_q)
+        f_out_q = torch.sum(f_out_q, dim = 1)
         
-#         qk = torch.unsqueeze(qk, dim = 1)
-#         grid = torch.unsqueeze(self.grid, dim = 1)
+        #f_out_k = self.lin_k(f_out_k)
+        f_out_k = torch.sum(f_out_k, dim = 1)
         
-#         # print('grid/qk shapes: ', grid.shape, ' ', qk.shape)
-#         f_out_qk = torch.sin(grid*qk).permute(2, 1, 0)
+        y_k = f_out_q*self.scale_sp + base_q
+        y_q = f_out_k*self.scale_sp + base_k
+        #print('-- shapes: ', y_k.shape)
+        y_k = y_k.reshape(batch, heads, patches, dim)
+        y_q = y_q.reshape(batch, heads, patches, dim)
         
-
-#         f_out_qk = torch.einsum('ij,ijk->ijk', self.coef_qk, f_out_qk).permute(2, 1, 0)
         
-#         f_out_qk = torch.sum(f_out_qk, dim = 1)
-#         # print('after coef shape: ', f_out_qk.shape)
-#         f_out_qk = f_out_qk.reshape(int(2*batch), heads, patches, dim)
+        f_out_q = torch.sigmoid(torch.unsqueeze(y_q, dim = 3))
+        f_out_k = torch.sigmoid(torch.unsqueeze(y_k, dim = 2))
         
-#         f_out_qk = self.lin_qk(f_out_qk)
-#         # f_out_qk = torch.sum(f_out_qk, dim = 1)
+        f_out = (f_out_q + f_out_k)
+        f_out = torch.sum(f_out, dim = 4) # [batch, heads, 5, patches, patches]
         
-#         # print('*-*-*-*fout qk shape: ', f_out_qk.shape, self.scale_sp.shape)
-#         y_qk = f_out_qk*self.scale_sp + base_qk
-#         y_k = y_qk[0:batch, :]
-#         y_q = y_qk[batch:batch*2, :]
+        #y = y_k + y_q
+        #y = y.reshape(batch, heads, patches, self.out_dim)
+        attn = f_out.softmax(dim=-1)
         
-#         y = y_k + y_q
-#         y = y.reshape(batch, heads, patches, self.out_dim)
-#         attn = y.softmax(dim=-1)
-        
-#         return attn
+        return attn
 
 class KA_attention(nn.Module):
     def __init__(self, out_dim, patches, heads, head_dim, num_f = 8, base_fun = nn.SiLU(), device = 'cuda'):
@@ -495,21 +846,18 @@ class KA_attention(nn.Module):
         f_out_q = torch.einsum('ij,ijk->ijk', self.coef_q, f_out_q).permute(2, 1, 0)
         f_out_k = torch.einsum('ij,ijk->ijk', self.coef_k, f_out_k).permute(2, 1, 0)
         
-        # f_out_q = f_out_q.reshape(batch, -1).unsqueeze(dim = 2)
-        # f_out_k = f_out_k.reshape(batch, -1).unsqueeze(dim = 2)
-        
-        # f_out_q = self.conv_layer_q(f_out_q)
+
         f_out_q = self.lin_q(f_out_q)
-        # f_out_q = f_out_q.reshape(batch, self.num_f, patches*heads*self.out_dim)
         f_out_q = torch.sum(f_out_q, dim = 1)
         
-        # f_out_k = self.conv_layer_k(f_out_k)
         f_out_k = self.lin_k(f_out_k)
-        # f_out_k = f_out_k.reshape(batch, self.num_f, patches*heads*self.out_dim)
         f_out_k = torch.sum(f_out_k, dim = 1)
         
         y_k = f_out_q*self.scale_sp + base_q
         y_q = f_out_k*self.scale_sp + base_k
+        
+        
+        
         
         y = y_k + y_q
         y = y.reshape(batch, heads, patches, self.out_dim)

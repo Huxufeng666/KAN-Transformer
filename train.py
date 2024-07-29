@@ -12,7 +12,6 @@ import time
 
 # from models.models_file import MLP_Net, KAN_Net, Sin_Net
 from models.deep_vision_transformer import deepvit_S,deepvit_L
-
 from models.Efficient_SA_transformer import vit_base_patch16_224
 
 import torch
@@ -43,8 +42,8 @@ transform = transforms.Compose([
 # train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True, num_workers=4)
 # val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False, num_workers=4)
 
-cifar_trainset = torchvision.datasets.CIFAR10(root = './data', train = True, download = True, transform = transform)
-cifar_testset = torchvision.datasets.CIFAR10(root = './data', train = False, download = True, transform = transform)
+cifar_trainset = torchvision.datasets.CIFAR100(root = './data', train = True, download = True, transform = transform)
+cifar_testset = torchvision.datasets.CIFAR100(root = './data', train = False, download = True, transform = transform)
 
 train_loader = torch.utils.data.DataLoader(dataset = cifar_trainset, batch_size = 16, shuffle = True , num_workers=4) # MNIST = 1000, cifar orig = 4
 validation_loader = torch.utils.data.DataLoader(dataset = cifar_testset, batch_size = 16, shuffle = False , num_workers=4) # MNIST = 2000
@@ -67,12 +66,16 @@ optimizer = optim.Adam(model.parameters(), 0.0001)
 # optimizer = LBFGS(model.parameters(), lr = 0.01, history_size=10, line_search_fn="strong_wolfe", tolerance_grad=1e-32, tolerance_change=1e-32, tolerance_ys=1e-32)
 
 
-weight_save_path = './CIFAR10_KAN_cross-entropy_KL_training/'
+weight_save_path = 'output/KA_attention_crossinf_multi_head/'
                     
 
-# model.load_state_dict(torch.load('D:\\mlp_modification\\weight_saves\\2_Grouped_KAN_training\\Model_49.py'))
+# model.load_state_dict(torch.load('D:\\mlp_modification\\weight_saves\\2_Grouped_KAN_training\\Model_4
 # model.fc1.show_act()
-
+# if torch.cuda.device_count() > 1:
+#     print(f"Using {torch.cuda.device_count()} GPUs!")
+#     model = nn.DataParallel(model)
+tst = time.time()
+    
 for epoch in range(0, epochs):
     train_accuracy = []
     train_loss = []
@@ -81,9 +84,7 @@ for epoch in range(0, epochs):
     
     # if epoch > 5:
     #     optimizer = optim.Adam(model.parameters(), 0.001)
-    
-    tst = time.time()
-    
+   
     for sample in tqdm(train_loader):
         image, label = sample
         
