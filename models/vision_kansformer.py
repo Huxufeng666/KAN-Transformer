@@ -129,7 +129,9 @@ class Attention(nn.Module):
         self.num_heads = num_heads # 设置注意力头的数量
         head_dim = dim // num_heads # 计算每个头的维度
         self.scale = qk_scale or head_dim ** -0.5 # 设置缩放因子，若未提供则默认为头维度的倒数的平方根
+        
         self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)  # 初始化注意力机制中的查询、键、值的线性变换
+
         self.attn_drop = nn.Dropout(attn_drop_ratio) # 初始化用于丢弃注意力权重的Dropout层
         self.proj = nn.Linear(dim, dim) # 初始化输出投影的线性变换
         self.proj_drop = nn.Dropout(proj_drop_ratio) # 初始化用于丢弃输出投影的Dropout层
@@ -417,6 +419,24 @@ def _init_vit_weights(m):
         # 如果是 LayerNorm 层，初始化偏置为零，权重为一
         nn.init.zeros_(m.bias)
         nn.init.ones_(m.weight)
+
+
+def kan_attention_patch16_224(num_classes: int = 1000): # 构建 KiT-Base 模型
+    """
+    ViT-Base model (ViT-B/16) from original paper (https://arxiv.org/abs/2010.11929).
+    ImageNet-1k weights @ 224x224, source https://github.com/google-research/vision_transformer.
+    weights ported from official Google JAX impl:
+    链接: https://pan.baidu.com/s/1zqb08naP0RPqqfSXfkB2EA  密码: eu9f
+    """
+    model = VisionTransformer(img_size=224, # 输入图像的大小，为 224x224
+                              patch_size=16, # 感受野大小，即每个patch的大小为16x16
+                              embed_dim=768,  # 嵌入维度，即 Transformer 模型中每个token的维度
+                              depth=12, # Transformer 模型的层数
+                              num_heads=12,  # 注意力头数，即每个注意力层中多头注意力的头数
+                              representation_size=None, # 表示层的大小，用于控制模型输出的维度，如果为 None，则不进行降维处理
+                              num_classes=num_classes) # 分类的类别数
+    return model
+
 
 def efficient_kit_base_patch16_224(num_classes: int = 1000): # 构建 KiT-Base 模型
     """

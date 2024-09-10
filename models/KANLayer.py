@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import numpy as np
-from spline import *
+from .spline import *
 
 
 class KANLayer(nn.Module):

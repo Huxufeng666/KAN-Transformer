@@ -36,6 +36,11 @@ from timm.models.helpers import build_model_with_cfg, resolve_pretrained_cfg, na
 from timm.models.layers import PatchEmbed, Mlp, DropPath, trunc_normal_, lecun_normal_
 from timm.models.registry import register_model
 
+
+from .kan_Mixer import KANLinear ,MixerLayer
+
+
+
 _logger = logging.getLogger(__name__)
 
 
@@ -211,6 +216,14 @@ class Attention(nn.Module):
         self.attn_drop = nn.Dropout(attn_drop)
         self.proj = nn.Linear(dim, dim)
         self.proj_drop = nn.Dropout(proj_drop)
+        # self.kan_attention = GroupedKAAttention(   
+        #                                         total_dim=3*224*224,
+        #                                         patches=7,
+        #                                         heads=self.num_heads,
+        #                                         # head_dim=16,
+        #                                         hidden_dim=128,
+        #                                         groups=128)
+
 
     def forward(self, x):
         B, N, C = x.shape
@@ -254,19 +267,30 @@ class Block(nn.Module):
     ):
         super().__init__()
         self.norm1 = norm_layer(dim)
+
+        # self.KanMxing = MixerLayer(embedding_dim=dim, num_patch=16 ,token_intermediate_dim=64, channel_intermediate_dim=128,)
+
         self.attn = Attention(dim, num_heads=num_heads, qkv_bias=qkv_bias, attn_drop=attn_drop, proj_drop=drop)
+
         self.ls1 = LayerScale(dim, init_values=init_values) if init_values else nn.Identity()
         # NOTE: drop path for stochastic depth, we shall see if this is better than dropout here
         self.drop_path1 = DropPath(drop_path) if drop_path > 0. else nn.Identity()
 
         self.norm2 = norm_layer(dim)
         self.mlp = Mlp(in_features=dim, hidden_features=int(dim * mlp_ratio), act_layer=act_layer, drop=drop)
+                
         self.ls2 = LayerScale(dim, init_values=init_values) if init_values else nn.Identity()
         self.drop_path2 = DropPath(drop_path) if drop_path > 0. else nn.Identity()
 
+
     def forward(self, x):
+
+        # x =   self.KanMxing(self.norm1(x))
+
         x = x + self.drop_path1(self.ls1(self.attn(self.norm1(x))))
+    
         x = x + self.drop_path2(self.ls2(self.mlp(self.norm2(x))))
+
         return x
 
 
@@ -391,6 +415,7 @@ class VisionTransformer(nn.Module):
             drop_path_rate=0.,
             weight_init='',
             embed_layer=PatchEmbed,
+            # kan_layer= KANLinear,
             norm_layer=None,
             act_layer=None,
             block_fn=Block,
@@ -439,8 +464,15 @@ class VisionTransformer(nn.Module):
             embed_dim=embed_dim,
             bias=not pre_norm,  # disable bias if pre-norm is used (e.g. CLIP)
         )
+
+        # self.patch_embed = kan_layer(self.patch_embed)
+  
+
         num_patches = self.patch_embed.num_patches
 
+        # self.kan_linear = KANLinear(in_chans,in_chans)
+
+       
         self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim)) if class_token else None
         embed_len = num_patches if no_embed_class else num_patches + self.num_prefix_tokens
         self.pos_embed = nn.Parameter(torch.randn(1, embed_len, embed_dim) * .02)
@@ -530,6 +562,10 @@ class VisionTransformer(nn.Module):
 
     def forward_features(self, x):
         x = self.patch_embed(x)
+        # print(x.shape)
+        # x = self.kan_linear(x)
+        # print(x.shape)
+
         x = self._pos_embed(x)
         x = self.norm_pre(x)
         if self.grad_checkpointing and not torch.jit.is_scripting():
@@ -546,7 +582,9 @@ class VisionTransformer(nn.Module):
         return x if pre_logits else self.head(x)
 
     def forward(self, x):
+
         x = self.forward_features(x)
+        
         x = self.forward_head(x)
         return x
 

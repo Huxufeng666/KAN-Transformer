@@ -10,9 +10,9 @@ import numpy as np
 import os
 import time
 
-from models_file import MLP_Net, KAN_Net, Sin_Net, Efficient_KAN_Net, Efficient_SKAN_Net
-from SLayer import Slayer
-from LBFGS import LBFGS
+from models.models_file import MLP_Net, KAN_Net, Sin_Net, Efficient_KAN_Net, Efficient_SKAN_Net
+# from models.SLayer import Slayer
+from models.LBFGS import LBFGS
 from models.vision_kansformer import *
 from models.vision_transformer import *
 from models.deep_vision_transformer import *

@@ -1,90 +1,57 @@
+from kan import KAN
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
+import copy
 
-class FlashAttention(nn.Module):
-    def __init__(self, embed_dim, num_heads, dropout=0.1):
-        super(FlashAttention, self).__init__()
-        self.embed_dim = embed_dim
-        self.num_heads = num_heads
-        self.dropout = nn.Dropout(dropout)
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+print(device)
 
-        assert embed_dim % num_heads == 0, "Embedding dimension must be divisible by the number of heads"
+seed = 1
 
-        self.head_dim = embed_dim // num_heads
+model = KAN(width=[6,1,1], grid=3, k=3, seed=seed, device=device)
 
-        self.qkv_proj = nn.Linear(embed_dim, 3 * embed_dim)
-        self.o_proj = nn.Linear(embed_dim, embed_dim)
+# create dataset
 
-    def forward(self, x, mask=None):
-        batch_size, seq_len, embed_dim = x.size()
+
+def create_dataset(train_num=500, test_num=500):
+    
+    def generate_contrastive(x):
+        # positive samples
+        batch = x.shape[0]
+        x[:,2] = torch.exp(torch.sin(torch.pi*x[:,0])+x[:,1]**2)
+        x[:,3] = x[:,4]**3
+
+        # negative samples
+        def corrupt(tensor):
+            y = copy.deepcopy(tensor)
+            for i in range(y.shape[1]):
+                y[:,i] = y[:,i][torch.randperm(y.shape[0])]
+            return y
+
+        x_cor = corrupt(x)
+        x = torch.cat([x, x_cor], dim=0)
         
-        qkv = self.qkv_proj(x)
-        qkv = qkv.view(batch_size, seq_len, 3, self.num_heads, self.head_dim)
-        qkv = qkv.permute(2, 0, 3, 1, 4)  # (3, batch_size, num_heads, seq_len, head_dim)
+        y = torch.cat([torch.ones(batch,), torch.zeros(batch,)], dim=0)[:,None]
+        return x, y
         
-        q, k, v = qkv[0], qkv[1], qkv[2]
-        
-        # Scaled dot-product attention
-        attn_scores = torch.matmul(q, k.transpose(-2, -1)) / (self.head_dim ** 0.5)
-        if mask is not None:
-            attn_scores = attn_scores.masked_fill(mask == 0, float('-inf'))
-        
-        attn_probs = F.softmax(attn_scores, dim=-1)
-        attn_probs = self.dropout(attn_probs)
+    x = torch.rand(train_num, 6) * 2 - 1
+    x_train, y_train = generate_contrastive(x)
+    
+    x = torch.rand(test_num, 6) * 2 - 1
+    x_test, y_test = generate_contrastive(x)
+    
+    dataset = {}
+    dataset['train_input'] = x_train.to(device)
+    dataset['test_input'] = x_test.to(device)
+    dataset['train_label'] = y_train.to(device)
+    dataset['test_label'] = y_test.to(device)
+    return dataset
 
-        attn_output = torch.matmul(attn_probs, v)
-        attn_output = attn_output.transpose(1, 2).contiguous().view(batch_size, seq_len, embed_dim)
-        
-        output = self.o_proj(attn_output)
-        
-        return output
+dataset = create_dataset()
 
-class TransformerLayer(nn.Module):
-    def __init__(self, embed_dim, num_heads, dropout=0.1):
-        super(TransformerLayer, self).__init__()
-        self.flash_attention = FlashAttention(embed_dim, num_heads, dropout)
-        self.layer_norm1 = nn.LayerNorm(embed_dim)
-        self.layer_norm2 = nn.LayerNorm(embed_dim)
-        self.ffn = nn.Sequential(
-            nn.Linear(embed_dim, embed_dim * 4),
-            nn.ReLU(),
-            nn.Linear(embed_dim * 4, embed_dim),
-            nn.Dropout(dropout)
-        )
 
-    def forward(self, x, mask=None):
-        attn_output = self.flash_attention(x, mask)
-        x = self.layer_norm1(x + attn_output)
-        ffn_output = self.ffn(x)
-        x = self.layer_norm2(x + ffn_output)
-        return x
+model(dataset['train_input'])
+model.fix_symbolic(1,0,0,'gaussian',fit_params_bool=False)
 
-class Transformer(nn.Module):
-    def __init__(self, num_layers, embed_dim, num_heads, dropout=0.1):
-        super(Transformer, self).__init__()
-        self.layers = nn.ModuleList([
-            TransformerLayer(embed_dim, num_heads, dropout)
-            for _ in range(num_layers)
-        ])
-        self.layer_norm = nn.LayerNorm(embed_dim)
+# model.fit(dataset, opt="LBFGS", steps=50, lamb=0.002, lamb_entropy=10.0, lamb_coef=1.0);
 
-    def forward(self, x, mask=None):
-        for layer in self.layers:
-            x = layer(x, mask)
-        x = self.layer_norm(x)
-        return x
-
-# Example usage:
-batch_size = 32
-seq_len = 128
-embed_dim = 512
-num_heads = 8
-num_layers = 6
-
-x = torch.randn(batch_size, seq_len, embed_dim)
-mask = torch.ones(batch_size, seq_len).bool()
-
-transformer = Transformer(num_layers, embed_dim, num_heads)
-output = transformer(x, mask)
-print(output.shape)  # Expected output: (batch_size, seq_len, embed_dim)
+print(model.score(dataset['test_input'], dataset['test_label']))
