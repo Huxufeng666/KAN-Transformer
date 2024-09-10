@@ -49,8 +49,8 @@ transform = transforms.Compose([
 # train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True, num_workers=4)
 # val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False, num_workers=4)
 
-cifar_trainset = datasets.CIFAR10(root = './data', train = True, download = True, transform = transform)
-cifar_testset = datasets.CIFAR10(root = './data', train = False, download = True, transform = transform)
+cifar_trainset = datasets.CIFAR100(root = './data', train = True, download = True, transform = transform)
+cifar_testset = datasets.CIFAR100(root = './data', train = False, download = True, transform = transform)
 
 train_loader = torch.utils.data.DataLoader(dataset = cifar_trainset, batch_size = 16, shuffle = True , num_workers=2) # MNIST = 1000, cifar orig = 4
 validation_loader = torch.utils.data.DataLoader(dataset = cifar_testset, batch_size = 16, shuffle = False , num_workers=2) # MNIST = 2000
