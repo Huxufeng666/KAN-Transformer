@@ -1,23 +1,16 @@
 import torch
-import torch.nn as nn
-import torchvision
-import torchvision.datasets as datasets
-import torch.optim as optim
-import torchvision.transforms as transforms
-
 from tqdm import tqdm
 import numpy as np
-import os
 import time
+import torch.nn as nn
+import torch.optim as optim
 
-# from models.models_file import MLP_Net, KAN_Net, Sin_Net
-from models.deep_vision_transformer import deepvit_S,deepvit_L
-from models.Efficient_SA_transformer import vit_base_patch16_224
-
-import torch
 from torchvision import datasets, transforms
 from torch.utils.data import DataLoader
+
 from util.file import save_training_info_csv ,save_top_k_weights
+from models.deep_vision_transformer import deepvit_S,deepvit_L
+from models.Efficient_SA_transformer import vit_base_patch16_224
 
 
 
@@ -42,11 +35,11 @@ transform = transforms.Compose([
 # train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True, num_workers=4)
 # val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False, num_workers=4)
 
-cifar_trainset = torchvision.datasets.CIFAR100(root = './data', train = True, download = True, transform = transform)
-cifar_testset = torchvision.datasets.CIFAR100(root = './data', train = False, download = True, transform = transform)
+cifar_trainset = datasets.CIFAR10(root = './data', train = True, download = True, transform = transform)
+cifar_testset = datasets.CIFAR10(root = './data', train = False, download = True, transform = transform)
 
-train_loader = torch.utils.data.DataLoader(dataset = cifar_trainset, batch_size = 16, shuffle = True , num_workers=4) # MNIST = 1000, cifar orig = 4
-validation_loader = torch.utils.data.DataLoader(dataset = cifar_testset, batch_size = 16, shuffle = False , num_workers=4) # MNIST = 2000
+train_loader = DataLoader(dataset = cifar_trainset, batch_size = 16, shuffle = True , num_workers=4) # MNIST = 1000, cifar orig = 4
+validation_loader = DataLoader(dataset = cifar_testset, batch_size = 16, shuffle = False , num_workers=4) # MNIST = 2000
 
 
 
