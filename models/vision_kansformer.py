@@ -126,7 +126,7 @@ class KanAttention(nn.Module):
                  attn_drop_ratio=0., # 注意力权重的丢弃率，默认为0
                  proj_drop_ratio=0.):  # 输出投影的丢弃率，默认为0
         super(KanAttention, self).__init__()
-        # 初始化注意力层 
+        # 初始化注意力层  
         self.num_heads = num_heads # 设置注意力头的数量
         head_dim = dim // num_heads # 计算每个头的维度
         self.scale = qk_scale or head_dim ** -0.5 # 设置缩放因子，若未提供则默认为头维度的倒数的平方根
