@@ -4,5 +4,5 @@ data
 *.pt
 *.npy
 *.pyc
-
+__pycache__
 KAN-Transformer/models/__pycache__
