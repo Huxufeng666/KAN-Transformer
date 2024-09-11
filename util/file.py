@@ -4,7 +4,7 @@ import numpy as np
 import torch
 
 
-def save_training_info_csv(weight_save_path, epoch, train_loss, train_accuracy, tt, val_loss, val_accuracy, vt):
+def save_training_info_csv(weight_save_path, epoch, train_loss, train_accuracy, tt, val_loss, val_accuracy, vt, total_params):
     # 确保目录存在
     if not os.path.exists(weight_save_path):
         os.makedirs(weight_save_path)
@@ -14,19 +14,46 @@ def save_training_info_csv(weight_save_path, epoch, train_loss, train_accuracy, 
 
     # 检查文件是否存在，决定是否写入header
     file_exists = os.path.exists(csv_file_path)
-    
-    print('Epoch: ', epoch)
-    with open(csv_file_path, 'a', newline='') as f:
-        writer = csv.writer(f)
+     
 
-        # 如果文件不存在，写入header
+    print('Epoch: ', epoch)
+
+    column_format = "{:<20}"  # 每列设置为宽度20，左对齐
+
+    with open(csv_file_path, 'a') as f:
         if not file_exists:
-            writer.writerow(['Epoch', 'Training_Loss', 'Training_Accuracy', 'Training_Time',
-                             'Validation_Loss', 'Validation_Accuracy', 'Validation_Time'])
+        # 写入header
+            f.write(column_format.format('Epoch') + 
+                    column_format.format('Training_Loss') +
+                    column_format.format('Training_Accuracy') +
+                    column_format.format('Training_Time') +
+                    column_format.format('Validation_Loss') +
+                    column_format.format('Validation_Accuracy') +
+                    column_format.format('Validation_Time') +
+                    column_format.format('Total_Params') + '\n')
 
         # 写入训练信息
-        writer.writerow([epoch, np.mean(train_loss), np.mean(train_accuracy), tt,
-                         np.mean(val_loss), np.mean(val_accuracy), vt])
+        f.write(column_format.format(epoch) +
+                column_format.format(np.mean(train_loss)) +
+                column_format.format(np.mean(train_accuracy)) +
+                column_format.format(tt) +
+                column_format.format(np.mean(val_loss)) +
+                column_format.format(np.mean(val_accuracy)) +
+                column_format.format(vt) +
+                column_format.format(total_params) + '\n')
+
+
+    # with open(csv_file_path, 'a', newline='') as f:
+    #     writer = csv.writer(f)
+
+    #     # 如果文件不存在，写入header
+    #     if not file_exists:
+    #         writer.writerow(['Epoch', 'Training_Loss', 'Training_Accuracy', 'Training_Time',
+    #                          'Validation_Loss', 'Validation_Accuracy', 'Validation_Time', 'Total_Params'])
+
+    #     # 写入训练信息
+    #     writer.writerow([epoch, np.mean(train_loss), np.mean(train_accuracy), tt,
+    #                      np.mean(val_loss), np.mean(val_accuracy), vt,total_params])
         
 
 

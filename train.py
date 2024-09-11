@@ -1,16 +1,30 @@
 import torch
+import torch.nn as nn
+import torchvision.datasets as datasets
+import torch.optim as optim
+import torchvision.transforms as transforms
+
 from tqdm import tqdm
 import numpy as np
+import os
 import time
-import torch.nn as nn
-import torch.optim as optim
+
+# from models.models_file import MLP_Net, KAN_Net, Sin_Net
+from models.deep_vision_transformer import deepvit_S,deepvit_L
+from models.Efficient_SA_transformer import vit_base_patch16_224
+from models.DEIT_transformer import vit_tiny_patch16_224 
+from models.DEIT import deit_base_patch16_224
+from torch.nn.parallel import DistributedDataParallel
+from models.vision_kansformer import kan_attention_patch16_224
+from models.kan_Mixer import KANLinear ,MixerLayer,KANMixer
+
+
+
+import torch
 
 from torchvision import datasets, transforms
 from torch.utils.data import DataLoader
-
 from util.file import save_training_info_csv ,save_top_k_weights
-from models.deep_vision_transformer import deepvit_S,deepvit_L
-from models.Efficient_SA_transformer import vit_base_patch16_224
 
 
 
@@ -35,39 +49,57 @@ transform = transforms.Compose([
 # train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True, num_workers=4)
 # val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False, num_workers=4)
 
-cifar_trainset = datasets.CIFAR10(root = './data', train = True, download = True, transform = transform)
-cifar_testset = datasets.CIFAR10(root = './data', train = False, download = True, transform = transform)
+cifar_trainset = datasets.CIFAR100(root = './data', train = True, download = True, transform = transform)
+cifar_testset = datasets.CIFAR100(root = './data', train = False, download = True, transform = transform)
 
-train_loader = DataLoader(dataset = cifar_trainset, batch_size = 16, shuffle = True , num_workers=4) # MNIST = 1000, cifar orig = 4
-validation_loader = DataLoader(dataset = cifar_testset, batch_size = 16, shuffle = False , num_workers=4) # MNIST = 2000
+train_loader = torch.utils.data.DataLoader(dataset = cifar_trainset, batch_size = 16, shuffle = True , num_workers=2) # MNIST = 1000, cifar orig = 4
+validation_loader = torch.utils.data.DataLoader(dataset = cifar_testset, batch_size = 16, shuffle = False , num_workers=2) # MNIST = 2000
 
 
 
 # model = MLP_Net().cuda()
 # model = KAN_Net().cuda()
 # model = vit_base_patch16_224().cuda()
-model = deepvit_S().cuda()
+# model = deepvit_S().cuda()
+
+model = kan_attention_patch16_224().cuda()
+
+# model = deit_base_patch16_224().cuda()
+
+# model = KANMixer(
+#     in_channels=3,
+#     image_size=224,
+#     patch_size=16,
+#     num_classes=10,
+#     embedding_dim=32,
+#     depth=2,
+#     token_intermediate_dim=64,
+#     channel_intermediate_dim=128,).cuda()
+
+
+
+if torch.cuda.device_count() > 1:
+    print(f"Using {torch.cuda.device_count()} GPUs!")
+    model = nn.DataParallel(model)
 
 
 for name, param in model.named_parameters():
     if param.requires_grad:
         print(name)
 
-epochs = 200
+epochs = 100
 loss_function = nn.CrossEntropyLoss()
 optimizer = optim.Adam(model.parameters(), 0.0001)
 # optimizer = LBFGS(model.parameters(), lr = 0.01, history_size=10, line_search_fn="strong_wolfe", tolerance_grad=1e-32, tolerance_change=1e-32, tolerance_ys=1e-32)
 
 
-weight_save_path = 'output/KA_attention_crossinf_multi_head/'
+weight_save_path = 'output/kan_attention_patch16_224/'
                     
 
 # model.load_state_dict(torch.load('D:\\mlp_modification\\weight_saves\\2_Grouped_KAN_training\\Model_4
 # model.fc1.show_act()
-# if torch.cuda.device_count() > 1:
-#     print(f"Using {torch.cuda.device_count()} GPUs!")
-#     model = nn.DataParallel(model)
-tst = time.time()
+
+
     
 for epoch in range(0, epochs):
     train_accuracy = []
@@ -75,9 +107,13 @@ for epoch in range(0, epochs):
     val_accuracy = []
     val_loss = []
     
-    # if epoch > 5:
-    #     optimizer = optim.Adam(model.parameters(), 0.001)
-   
+    # if epoch > 25:
+    #     optimizer = optim.Adam(model.parameters(), 0.0005)
+    # # if epoch > 35:
+    #     optimizer = optim.Adam(model.parameters(), 0.002)
+    # if epoch > 75:
+    #     optimizer = optim.Adam(model.parameters(), 0.005)
+    tst = time.time()
     for sample in tqdm(train_loader):
         image, label = sample
         
@@ -126,6 +162,8 @@ for epoch in range(0, epochs):
     val_loss = np.array(val_loss)
     vt = time.time() - vst
     
+    total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f"模型的参数总数: {total_params}")
 
     save_top_k_weights(
 
@@ -151,7 +189,15 @@ for epoch in range(0, epochs):
         tt,
         val_loss,
         val_accuracy,
-        vt
+        vt,
+        total_params 
     )
 
 #     
+
+
+"""
+CUDA_VISIBLE_DEVICES=0 python train.py
+CUDA_VISIBLE_DEVICES=1 python train.py
+
+"""

@@ -5,8 +5,9 @@ from functools import partial
 import torch.nn.init as init
 import torch.nn.functional as F
 from timm.models.layers import DropPath, to_2tuple
+# from models.exp_file import GroupedKAAttention
 
-from models.attention_mechanisms import KAN_attention, KA_attention, KA_attention_reduced, KA_attention_crossinf, KA_attention_crossinf_multi_head, KA_attention_heads_mod,Grouped_KA_attention
+from models.attention_mechanisms import KAN_attention, KA_attention, KA_attention_reduced, KA_attention_crossinf, KA_attention_crossinf_multi_head, KA_attention_heads_mod,Grouped_KA_attention,GroupedKAAttention
 # from attention_mechanisms import KA_attention_crossinf_multi_head
 
 class Mlp(nn.Module):
@@ -29,7 +30,7 @@ class Mlp(nn.Module):
         return x
 
 class Attention(nn.Module):
-    def __init__(self, dim, num_patches, num_heads=8, qkv_bias=False, qk_scale=None, attn_drop=0., proj_drop=0., expansion_ratio=3):
+    def __init__(self, dim, num_patches, num_heads=128, qkv_bias=False, qk_scale=None, attn_drop=0., proj_drop=0., expansion_ratio=3):
         super().__init__()
         self.num_heads = num_heads
         head_dim = dim // num_heads
@@ -42,13 +43,21 @@ class Attention(nn.Module):
         self.proj = nn.Linear(dim, dim)
         self.proj_drop = nn.Dropout(proj_drop)
         
-        self.kan_attention = KA_attention_crossinf_multi_head(out_dim = num_patches, patches = num_patches, heads = self.num_heads, head_dim = head_dim)
+        # self.kan_attention = KA_attention_crossinf_multi_head(out_dim = num_patches, patches = num_patches, heads = self.num_heads, head_dim = head_dim)
+        self.kan_attention = GroupedKAAttention(   
+                                                total_dim=3*224*224,
+                                                patches=7,
+                                                heads=self.num_heads,
+                                                # head_dim=16,
+                                                hidden_dim=128,
+                                                groups=128)
+    
         # print( 'num_patches',num_patches.shape)
         # print('num_patches: ', (self.num_heads).shape)
         # print('head_dim: ', head_dim.shape)
-        # self.kan_attention = KA_attention_heads_mod(out_dim = num_patches, patches = num_patches, heads = self.num_heads, head_dim = head_dim)
+        self.kan_attention = KA_attention_heads_mod(out_dim = num_patches, patches = num_patches, heads = self.num_heads, head_dim = head_dim)
 
-    def forward(self, x, atten=None):
+    def forward(self, x, attn=None):
         
         B, N, C = x.shape
         # print('----- input shape: ', x.shape)
@@ -63,12 +72,14 @@ class Attention(nn.Module):
         # x = (attn @ v).transpose(1, 2).reshape(B, N, C)
         # print('after attention shape: ', x.shape)
         
-        attn = self.kan_attention(q, k, self.scale)
+        attn = self.kan_attention(q, k) * self.scale
+        # attn = attn.softmax(dim=-1)
+    
+        # print('actual attention shape: ', attn.shape) 
         # attn = (q @ k.transpose(-2, -1)) * self.scale
         # attn = self.attn_drop(attn)
-        # x = (attn*v).transpose(1, 2).reshape(B, N, C)
+    
         x = (attn @ v).transpose(1, 2).reshape(B, N, C)
-
         x = self.proj(x)
         x = self.proj_drop(x)
         return x , attn

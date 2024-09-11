@@ -1034,3 +1034,77 @@ class KAN_attention(nn.Module):
         
         return attn
         
+
+
+
+
+
+
+class SingleVariableFunction(nn.Module):
+    """单变量函数逼近器"""
+    def __init__(self, input_dim, hidden_dim, hidden_dim1, hidden_dim2=512, hidden_dim3=1024, hidden_dim4=2048, output_dim=2048):
+        super().__init__()
+        self.fc1 = nn.Linear(input_dim, hidden_dim)
+        # self.fc2 = nn.Linear(hidden_dim1, hidden_dim2)
+        # self.fc3 = nn.Linear(hidden_dim2, hidden_dim3)
+        self.fc4 = nn.Linear(hidden_dim3, hidden_dim4)
+        self.fc5 = nn.Linear(hidden_dim4, output_dim)
+        self.act = nn.SiLU()  # 可根据需要选择其他激活函数
+
+    def forward(self, x):
+        x = self.act(self.fc1(x))
+        # x = self.act(self.fc2(x))
+        # x = self.act(self.fc3(x))
+        x = self.act(self.fc4(x))
+        return x
+
+class GroupedKAAttention(nn.Module):
+    """
+    分组 Kolmogorov-Arnold 注意力机制
+    """
+    def __init__(self, total_dim, patches, heads, hidden_dim, groups):
+        super().__init__()
+        self.total_dim = total_dim
+        self.groups = groups
+        # self.group_size = total_dim // groups
+        self.group_size = 197
+        
+
+        self.svfs_q = nn.ModuleList([
+            SingleVariableFunction(self.group_size, hidden_dim, patches)
+            for _ in range(groups)
+        ])
+        self.svfs_k = nn.ModuleList([
+            SingleVariableFunction(self.group_size, hidden_dim, patches)
+            for _ in range(groups)
+        ])
+
+        self.global_function = SingleVariableFunction(groups* patches, hidden_dim, heads)
+
+    def forward(self, q, k):
+        batch_size = q.shape[0]
+        q = q.reshape(batch_size, -1)  
+        k = k.reshape(batch_size, -1)
+        # product = q.size(0)*q.size(1)
+        # group_size = product / self.groups
+       
+
+        q_groups = q.view(batch_size, self.groups,  self.group_size).transpose(1, 2)
+        k_groups = k.view(batch_size, self.groups,  self.group_size).transpose(1, 2)
+        
+        q_features = [svf(q_groups[:, :, i]) for i, svf in enumerate(self.svfs_q)]
+        k_features = [svf(k_groups[:, :, i]) for i, svf in enumerate(self.svfs_k)]
+
+        q_features = torch.stack(q_features, dim=2).view(batch_size, -1)
+        k_features = torch.stack(k_features, dim=2).view(batch_size, -1)
+
+        # q_out = self.global_function(q_features).view(batch_size, -1)
+        # k_out = self.global_function(k_features).view(batch_size, -1)
+        
+        q_out = self.global_function(q_features)
+        k_out = self.global_function(k_features)
+
+        attn = (q_out * k_out)#.sum(dim=-1)
+        attn = attn.softmax(dim=-1)
+        # print(attn.shape)
+        return attn

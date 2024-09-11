@@ -10,6 +10,7 @@ from collections import OrderedDict # 从 collections 模块中导入 OrderedDic
 from src.efficient_KAN import KAN
 import torch
 import torch.nn as nn
+from models.kan_Mixer import KANLinear
 
 
 def drop_path(x, drop_prob: float = 0., training: bool = False):
@@ -116,7 +117,7 @@ class PatchEmbed(nn.Module):
         return x
 
 
-class Attention(nn.Module):
+class KanAttention(nn.Module):
     def __init__(self,
                  dim,   # 输入token的dim
                  num_heads=8, # 注意力头的数量，默认为8
@@ -124,12 +125,14 @@ class Attention(nn.Module):
                  qk_scale=None, # 查询和键的缩放因子，默认为 None
                  attn_drop_ratio=0., # 注意力权重的丢弃率，默认为0
                  proj_drop_ratio=0.):  # 输出投影的丢弃率，默认为0
-        super(Attention, self).__init__()
-        # 初始化注意力层 
+        super(KanAttention, self).__init__()
+        # 初始化注意力层  
         self.num_heads = num_heads # 设置注意力头的数量
         head_dim = dim // num_heads # 计算每个头的维度
         self.scale = qk_scale or head_dim ** -0.5 # 设置缩放因子，若未提供则默认为头维度的倒数的平方根
-        self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)  # 初始化注意力机制中的查询、键、值的线性变换
+        
+        self.qkv = KANLinear(dim, dim * 3)  # 初始化注意力机制中的查询、键、值的线性变换
+
         self.attn_drop = nn.Dropout(attn_drop_ratio) # 初始化用于丢弃注意力权重的Dropout层
         self.proj = nn.Linear(dim, dim) # 初始化输出投影的线性变换
         self.proj_drop = nn.Dropout(proj_drop_ratio) # 初始化用于丢弃输出投影的Dropout层
@@ -160,7 +163,52 @@ class Attention(nn.Module):
         x = self.proj(x) # 对输出进行线性变换
         x = self.proj_drop(x) # 对输出进行 Dropout 操作
         return x
+class Attention(nn.Module):
+    def __init__(self,
+                 dim,   # 输入token的dim
+                 num_heads=8, # 注意力头的数量，默认为8
+                 qkv_bias=False,  # 是否为注意力查询、键、值添加偏置，默认为False
+                 qk_scale=None, # 查询和键的缩放因子，默认为 None
+                 attn_drop_ratio=0., # 注意力权重的丢弃率，默认为0
+                 proj_drop_ratio=0.):  # 输出投影的丢弃率，默认为0
+        super(Attention, self).__init__()
+        # 初始化注意力层 
+        self.num_heads = num_heads # 设置注意力头的数量
+        head_dim = dim // num_heads # 计算每个头的维度
+        self.scale = qk_scale or head_dim ** -0.5 # 设置缩放因子，若未提供则默认为头维度的倒数的平方根
+        
+        self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)  # 初始化注意力机制中的查询、键、值的线性变换
 
+        self.attn_drop = nn.Dropout(attn_drop_ratio) # 初始化用于丢弃注意力权重的Dropout层
+        self.proj = nn.Linear(dim, dim) # 初始化输出投影的线性变换
+        self.proj_drop = nn.Dropout(proj_drop_ratio) # 初始化用于丢弃输出投影的Dropout层
+
+    def forward(self, x):
+        # 获取输入张量 x 的形状信息
+        # x: [batch_size, num_patches + 1, total_embed_dim]
+        B, N, C = x.shape
+         # 对输入张量 x 进行线性变换得到查询、键、值
+        # qkv(): -> [batch_size, num_patches + 1, 3 * total_embed_dim]
+        # reshape: -> [batch_size, num_patches + 1, 3, num_heads, embed_dim_per_head]
+        # permute: -> [3, batch_size, num_heads, num_patches + 1, embed_dim_per_head]
+        qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
+        # [batch_size, num_heads, num_patches + 1, embed_dim_per_head]
+        # 将查询、键、值分离出来
+        q, k, v = qkv[0], qkv[1], qkv[2]  # make torchscript happy (cannot use tensor as tuple)
+        # 计算注意力权重
+        # transpose: -> [batch_size, num_heads, embed_dim_per_head, num_patches + 1]
+        # @: multiply -> [batch_size, num_heads, num_patches + 1, num_patches + 1]
+        attn = (q @ k.transpose(-2, -1)) * self.scale
+        attn = attn.softmax(dim=-1)
+        attn = self.attn_drop(attn)
+
+        # @: multiply -> [batch_size, num_heads, num_patches + 1, embed_dim_per_head]
+        # transpose: -> [batch_size, num_patches + 1, num_heads, embed_dim_per_head]
+        # reshape: -> [batch_size, num_patches + 1, total_embed_dim]
+        x = (attn @ v).transpose(1, 2).reshape(B, N, C)
+        x = self.proj(x) # 对输出进行线性变换
+        x = self.proj_drop(x) # 对输出进行 Dropout 操作
+        return x
 
 class Mlp(nn.Module):
     """
@@ -229,8 +277,14 @@ class Block(nn.Module):
         super(Block, self).__init__()
         # 初始化第一个规范化层和注意力机制
         self.norm1 = norm_layer(dim)
-        self.attn = Attention(dim, num_heads=num_heads, qkv_bias=qkv_bias, qk_scale=qk_scale,
-                              attn_drop_ratio=attn_drop_ratio, proj_drop_ratio=drop_ratio)
+      
+        # self.attn = Attention(dim, num_heads=num_heads, qkv_bias=qkv_bias, qk_scale=qk_scale,
+        #                       attn_drop_ratio=attn_drop_ratio, proj_drop_ratio=drop_ratio)
+        
+        self.attn = KanAttention(dim, num_heads=num_heads, qkv_bias=qkv_bias, qk_scale=qk_scale,
+                            attn_drop_ratio=attn_drop_ratio, proj_drop_ratio=drop_ratio)
+      
+      
         # NOTE: drop path for stochastic depth, we shall see if this is better than dropout here
         # 初始化DropPath操作
         self.drop_path = DropPath(drop_path_ratio) if drop_path_ratio > 0. else nn.Identity()
@@ -417,6 +471,24 @@ def _init_vit_weights(m):
         # 如果是 LayerNorm 层，初始化偏置为零，权重为一
         nn.init.zeros_(m.bias)
         nn.init.ones_(m.weight)
+
+
+def kan_attention_patch16_224(num_classes: int = 1000): # 构建 KiT-Base 模型
+    """
+    ViT-Base model (ViT-B/16) from original paper (https://arxiv.org/abs/2010.11929).
+    ImageNet-1k weights @ 224x224, source https://github.com/google-research/vision_transformer.
+    weights ported from official Google JAX impl:
+    链接: https://pan.baidu.com/s/1zqb08naP0RPqqfSXfkB2EA  密码: eu9f
+    """
+    model = VisionTransformer(img_size=224, # 输入图像的大小，为 224x224
+                              patch_size=16, # 感受野大小，即每个patch的大小为16x16
+                              embed_dim=768,  # 嵌入维度，即 Transformer 模型中每个token的维度
+                              depth=12, # Transformer 模型的层数
+                              num_heads=12,  # 注意力头数，即每个注意力层中多头注意力的头数
+                              representation_size=None, # 表示层的大小，用于控制模型输出的维度，如果为 None，则不进行降维处理
+                              num_classes=num_classes) # 分类的类别数
+    return model
+
 
 def efficient_kit_base_patch16_224(num_classes: int = 1000): # 构建 KiT-Base 模型
     """

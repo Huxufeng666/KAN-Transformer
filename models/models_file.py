@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from KANLayer import KANLayer
+from  models.KANLayer import KANLayer
 from models.Symbolic_KANLayer import *
 from SLayer import Slayer, Slayer_grouped
 
