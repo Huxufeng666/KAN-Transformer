@@ -1,3 +1,3 @@
 # KAN-Transformer
 
-![Image Description](Overall architecture.png)
+<img src="Overall architecture.png" alt="Alt text" width="600" height="300">
