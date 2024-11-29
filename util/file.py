@@ -18,29 +18,34 @@ def save_training_info_csv(weight_save_path, epoch, train_loss, train_accuracy, 
 
     print('Epoch: ', epoch)
 
-    column_format = "{:<20}"  # 每列设置为宽度20，左对齐
 
     with open(csv_file_path, 'a') as f:
         if not file_exists:
-        # 写入header
-            f.write(column_format.format('Epoch') + 
-                    column_format.format('Training_Loss') +
-                    column_format.format('Training_Accuracy') +
-                    column_format.format('Training_Time') +
-                    column_format.format('Validation_Loss') +
-                    column_format.format('Validation_Accuracy') +
-                    column_format.format('Validation_Time') +
-                    column_format.format('Total_Params') + '\n')
+            # 写入header
+            header = (
+                f"{'Epoch':<10}"
+                f"{'Training_Loss':<20}"
+                f"{'Training_Accuracy':<20}"
+                f"{'Training_Time':<20}"
+                f"{'Validation_Loss':<20}"
+                f"{'Validation_Accuracy':<20}"
+                f"{'Validation_Time':<20}"
+                f"{'Total_Params':<20}\n"
+            )
+            f.write(header)
 
         # 写入训练信息
-        f.write(column_format.format(epoch) +
-                column_format.format(np.mean(train_loss)) +
-                column_format.format(np.mean(train_accuracy)) +
-                column_format.format(tt) +
-                column_format.format(np.mean(val_loss)) +
-                column_format.format(np.mean(val_accuracy)) +
-                column_format.format(vt) +
-                column_format.format(total_params) + '\n')
+        log_entry = (
+            f"{epoch:<10}"
+            f"{np.mean(train_loss):<20.4f}"
+            f"{np.mean(train_accuracy):<20.4f}"
+            f"{tt:<20.4f}"
+            f"{np.mean(val_loss):<20.4f}"
+            f"{np.mean(val_accuracy):<20.4f}"
+            f"{vt:<20.4f}"
+            f"{total_params:<20}\n"
+        )
+        f.write(log_entry)
 
 
     # with open(csv_file_path, 'a', newline='') as f:
